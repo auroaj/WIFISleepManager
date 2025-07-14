@@ -1,90 +1,120 @@
-# WiFi Sleep Manager - macOS App
+# WiFi Sleep Manager
+
+Menu bar app that automatically disables Wi-Fi when laptop lid closes and restores it when opened.
+
+## Features
+
+- ✅ Wi-Fi disable/restore on lid close/open
+- ✅ Optional Bluetooth management
+- ✅ Optional other network services control
+- ✅ Menu bar interface (system tray icon)
+- ✅ **Auto-enabled on startup** - monitoring starts immediately
+- ✅ Self-contained - no external dependencies
+- ✅ Built-in sleep/wake monitoring via NSWorkspace
+- ✅ Detailed logging with debug mode
+- ✅ Clean state management
+
+## Installation
+
+1. Download `WiFiSleepManager.dmg`
+2. Drag app to Applications
+3. Launch - icon appears in menu bar
+4. **Monitoring is enabled by default** - WiFi will auto-disable on sleep
+
+## Usage
+
+**Menu bar icon (🚫📶):**
+- **Enable/Disable** - toggle WiFi sleep monitoring
+- **Manage Bluetooth** - enable/disable Bluetooth management
+- **Debug Logging** - toggle detailed logs
+- Clear logs
+- Show logs folder
+- Quit
+
+App runs in background with no dock icon. WiFi monitoring is **active by default** on app launch.
+
+## Configuration Options
+
+- **WiFi Management**: Always enabled when monitoring is on
+- **Bluetooth Management**: Optional via menu (requires `blueutil`)
+- **Other Network Services**: Optional via settings UI
+- **Debug Logging**: Optional for troubleshooting
+
+## Technical Details
+
+- Uses NSWorkspace notifications + CGDisplay state monitoring
+- Creates config in `~/.wifi-sleep-manager/`
+- No external dependencies (sleepwatcher, scripts, etc.)
+- Auto-starts monitoring on app launch
+- Works on macOS 13.0+
+
+## Building
+
+### Prerequisites
+- Xcode 15.0+
+- macOS 13.0+ target
+
+### Setup
+```bash
+# Create Xcode project
+mkdir WiFiSleepManager && cd WiFiSleepManager
+# Use provided Swift files and project structure
+```
+
+### Build
+```bash
+xcodebuild archive -project WiFiSleepManager.xcodeproj -scheme WiFiSleepManager -configuration Release -archivePath WiFiSleepManager.xcarchive
+
+xcodebuild -exportArchive -archivePath WiFiSleepManager.xcarchive -exportPath . -exportOptionsPlist exportOptions.plist
+
+hdiutil create -volname "WiFi Sleep Manager" -srcfolder WiFiSleepManager.app -format UDZO WiFiSleepManager.dmg
+```
+
+### Add App Icon
+1. Create `Assets.xcassets/AppIcon.appiconset/`
+2. Add PNG icons: 16x16, 32x32, 128x128, 256x256, 512x512, 1024x1024
+   1. CLI command:
+      ```
+      for size in 16 32 128 256 512 1024; do
+        sips -z $size $size wifi-sleep-icon.png --out icon_${size}x${size}.png
+      done
+      ```
+3. Update `WiFiSleepManager/Assets.xcassets/AppIcon.appiconset/Contents.json`
 
 ## Project Structure
 
 ```
 WiFiSleepManager/
 ├── WiFiSleepManager/
-│   ├── WiFiSleepManagerApp.swift
-│   ├── ContentView.swift
+│   ├── WiFiSleepManagerApp.swift      # Menu bar app delegate + auto-start
+│   ├── ContentView.swift              # Power management logic
+│   ├── Assets.xcassets/
+│   │   └── AppIcon.appiconset/        # App icons
 │   ├── Info.plist
-│   └── WiFiSleepManager.entitlements
-├── WiFiSleepManager.xcodeproj
+│   ├── WiFiSleepManager.entitlements
+│   └── Preview Content/
+├── WiFiSleepManager.xcodeproj/
 └── README.md
 ```
 
-## Xcode Project Setup
+## Files Created
 
-1. **Create new project:**
-   - File → New → Project
-   - macOS → App
-   - Product Name: `WiFiSleepManager`
-   - Interface: SwiftUI
-   - Language: Swift
+- `~/.wifi-sleep-manager/app.log` - activity log
+- `~/.wifi-sleep-manager/wifi_state` - temporary Wi-Fi state
+- `~/.wifi-sleep-manager/bluetooth_state` - temporary Bluetooth state
+- `~/.wifi-sleep-manager/disabled_services` - temporary network services list
 
-2. **Add files:**
-   - Replace `ContentView.swift` with provided code
-   - Update `Info.plist`
-   - Add `WiFiSleepManager.entitlements`
-
-3. **Configure project:**
-   - Target → Signing & Capabilities → Disable App Sandbox
-   - Add Capability → Hardened Runtime
-   - Deployment Target: macOS 13.0
-
-## Dependencies
-
-No external dependencies required! Uses built-in macOS IOKit APIs for sleep/wake monitoring.
-
-## Features
-
-- ✅ Automatic Wi-Fi disable when lid closes
-- ✅ Wi-Fi restore on wake
-- ✅ Optional Bluetooth management
-- ✅ Disable other network services
-- ✅ Simple configuration UI
-- ✅ Automatic script installation/removal
-- ✅ Organized configuration directory
-
-## Build for Distribution
-
-1. **Archive build:**
-   ```bash
-   xcodebuild -project WiFiSleepManager.xcodeproj -scheme WiFiSleepManager -configuration Release -archivePath WiFiSleepManager.xcarchive archive
-   ```
-
-2. **Export .app:**
-   ```bash
-   xcodebuild -exportArchive -archivePath WiFiSleepManager.xcarchive -exportPath . -exportOptionsPlist exportOptions.plist
-   ```
-
-3. **Create DMG:**
-   ```bash
-   hdiutil create -volname "WiFi Sleep Manager" -srcfolder WiFiSleepManager.app -ov -format UDZO WiFiSleepManager.dmg
-   ```
-
-## Usage
-
-1. Launch application
-2. Enable "Disable Wi-Fi on sleep" toggle
-3. Configure additional options
-4. App creates necessary scripts and launch agent
+Files auto-cleanup after wake cycle.
 
 ## Requirements
 
 - macOS 13.0+
-- Administrator access (for networksetup commands)
-- Homebrew for sleepwatcher installation
+- No admin rights needed for basic Wi-Fi control
+- Bluetooth management requires `blueutil` (optional, install via Homebrew: `brew install blueutil`)
 
-## File Organization
+## Behavior
 
-App creates organized configuration in `~/.wifi-sleep-manager/`:
-- `sleep.sh` - script executed on sleep
-- `wakeup.sh` - script executed on wake
-- `config.json` - settings configuration
-- `wifi_state`, `bluetooth_state` - state files
-- `disabled_services` - list of disabled services
-- `sleepwatcher.log` - log file
-- `~/Library/LaunchAgents/com.wifisleepmanager.plist` - launch agent
-
-All files can be removed via app interface.
+1. **On first launch**: Monitoring starts automatically
+2. **Lid close**: WiFi disabled (+ Bluetooth if enabled)
+3. **Lid open**: WiFi restored to previous state
+4. **Menu control**: Toggle monitoring on/off anytime
