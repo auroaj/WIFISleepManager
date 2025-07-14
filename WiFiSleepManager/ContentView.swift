@@ -39,7 +39,7 @@ class PowerManager: ObservableObject {
     }
 
     private func registerForSleepNotifications() {
-        writeLog("Registering for sleep notifications")
+        writeDebugLog("Registering for sleep notifications")
 
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
@@ -47,7 +47,7 @@ class PowerManager: ObservableObject {
             name: NSWorkspace.screensDidSleepNotification,
             object: nil
         )
-        writeLog("Screen sleep notifications registered")
+        writeDebugLog("Screen sleep notifications registered")
 
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
@@ -55,14 +55,14 @@ class PowerManager: ObservableObject {
             name: NSWorkspace.screensDidWakeNotification,
             object: nil
         )
-        writeLog("Screen wake notifications registered")
+        writeDebugLog("Screen wake notifications registered")
 
         startLidStateMonitoring()
     }
 
     private func startLidStateMonitoring() {
-        writeLog("Starting lid state monitoring")
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+        writeDebugLog("Starting lid state monitoring")
+        timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { _ in
             self.checkLidState()
         }
     }
@@ -97,15 +97,15 @@ class PowerManager: ObservableObject {
     }
 
     @objc private func screenDidSleep() {
-        writeLog("=== SCREEN SLEEP EVENT RECEIVED ===")
+        writeDebugLog("=== SCREEN SLEEP EVENT RECEIVED ===")
         guard isMonitoring else {
-            writeLog("Monitoring disabled, ignoring screen sleep")
+            writeDebugLog("Monitoring disabled, ignoring screen sleep")
             return
         }
 
         // Save Wi-Fi state only on screen sleep (first trigger)
         if !FileManager.default.fileExists(atPath: configDir + "/wifi_state") {
-            writeLog("Saving Wi-Fi state on screen sleep...")
+            writeDebugLog("Saving Wi-Fi state on screen sleep...")
             saveWiFiState()
         }
 
@@ -113,9 +113,9 @@ class PowerManager: ObservableObject {
     }
 
     @objc private func screenDidWake() {
-        writeLog("=== SCREEN WAKE EVENT RECEIVED ===")
+        writeDebugLog("=== SCREEN WAKE EVENT RECEIVED ===")
         guard isMonitoring else {
-            writeLog("Monitoring disabled, ignoring screen wake")
+            writeDebugLog("Monitoring disabled, ignoring screen wake")
             return
         }
         performWakeActions()
