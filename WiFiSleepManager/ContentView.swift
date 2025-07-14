@@ -23,7 +23,7 @@ class PowerManager: ObservableObject {
     }
 
     private func setupPowerNotifications() {
-        let service = IORegistryEntryFromPath(kIOMainPortDefault, kIOPowerPlane ":/IOPowerConnection/IOPMrootDomain")
+        let service = IORegistryEntryFromPath(kIOMainPortDefault, kIOPowerPlane + ":/IOPowerConnection/IOPMrootDomain")
         guard service != 0 else { return }
 
         let result = IOServiceOpen(service, mach_task_self_, 0, &connection)
@@ -33,7 +33,7 @@ class PowerManager: ObservableObject {
         notificationPort = IONotificationPortCreate(kIOMainPortDefault)
         guard let port = notificationPort else { return }
 
-        let runLoopSource = IONotificationPortGetRunLoopSource(port)
+        let runLoopSource = IONotificationPortGetRunLoopSource(port)!.takeUnretainedValue()
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, CFRunLoopMode.defaultMode)
 
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
@@ -53,9 +53,9 @@ class PowerManager: ObservableObject {
 
     private func handlePowerNotification(messageType: UInt32, messageArgument: UnsafeMutableRawPointer?) {
         switch messageType {
-        case UInt32(kIOMessageSystemWillSleep):
+        case 0xe0000280: // kIOMessageSystemWillSleep
             onSystemWillSleep()
-        case UInt32(kIOMessageSystemHasPoweredOn):
+        case 0xe0000300: // kIOMessageSystemHasPoweredOn
             onSystemDidWake()
         default:
             break
