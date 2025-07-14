@@ -144,7 +144,7 @@ class PowerManager: ObservableObject {
         }
 
         if !wifiStateExists {
-            writwriteDebugLogeLog("Saving Wi-Fi state...")
+            writeDebugLog("Saving Wi-Fi state...")
             saveWiFiState()
         }
         writeDebugLog("Disabling Wi-Fi...")
