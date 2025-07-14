@@ -27,7 +27,7 @@ class PowerManager: ObservableObject {
         try? FileManager.default.removeItem(atPath: configDir + "/wifi_state")
         try? FileManager.default.removeItem(atPath: configDir + "/bluetooth_state")
         try? FileManager.default.removeItem(atPath: configDir + "/disabled_services")
-        writeLog("Cleared existing state files")
+        writeDebugLog("Cleared existing state files")
 
         registerForSleepNotifications()
     }
@@ -69,19 +69,19 @@ class PowerManager: ObservableObject {
 
     private func checkLidState() {
         let currentlyAwake = CGDisplayIsActive(CGMainDisplayID()) != 0
-        writeLog("Lid state check: \(currentlyAwake ? "OPEN" : "CLOSED")")
+        writeDebugLog("Lid state check: \(currentlyAwake ? "OPEN" : "CLOSED")")
 
         if wasAwake && !currentlyAwake {
             // Just went to sleep
             if lastSleepActionTime == nil || Date().timeIntervalSince(lastSleepActionTime!) > 5 {
-                writeLog("LID CLOSED DETECTED - triggering sleep actions")
+                writeDebugLog("LID CLOSED DETECTED - triggering sleep actions")
                 performSleepActions()
                 lastSleepActionTime = Date()
             }
         } else if !wasAwake && currentlyAwake {
             // Just woke up
             if lastWakeActionTime == nil || Date().timeIntervalSince(lastWakeActionTime!) > 5 {
-                writeLog("LID OPENED DETECTED - triggering wake actions")
+                writeDebugLog("LID OPENED DETECTED - triggering wake actions")
                 performWakeActions()
                 lastWakeActionTime = Date()
             }
@@ -122,71 +122,71 @@ class PowerManager: ObservableObject {
     }
 
     private func checkPowerState() {
-        writeLog("Power state callback triggered")
+        writeDebugLog("Power state callback triggered")
     }
 
     private func performSleepActions() {
-        writeLog(">>> STARTING SLEEP ACTIONS <<<")
-        writeLog("Bluetooth enabled: \(bluetoothEnabled)")
-        writeLog("Other services enabled: \(otherServicesEnabled)")
+        writeDebugLog(">>> STARTING SLEEP ACTIONS <<<")
+        writeDebugLog("Bluetooth enabled: \(bluetoothEnabled)")
+        writeDebugLog("Other services enabled: \(otherServicesEnabled)")
 
         // Only save states if files don't exist (first sleep action)
         let wifiStateExists = FileManager.default.fileExists(atPath: configDir + "/wifi_state")
         let bluetoothStateExists = FileManager.default.fileExists(atPath: configDir + "/bluetooth_state")
 
         if bluetoothEnabled && !bluetoothStateExists {
-            writeLog("Saving Bluetooth state...")
+            writeDebugLog("Saving Bluetooth state...")
             saveBluetoothState()
-            writeLog("Disabling Bluetooth...")
+            writeDebugLog("Disabling Bluetooth...")
             disableBluetooth()
         } else {
-            writeLog("Bluetooth already managed or disabled")
+            writeDebugLog("Bluetooth already managed or disabled")
         }
 
         if !wifiStateExists {
-            writeLog("Saving Wi-Fi state...")
+            writwriteDebugLogeLog("Saving Wi-Fi state...")
             saveWiFiState()
         }
-        writeLog("Disabling Wi-Fi...")
+        writeDebugLog("Disabling Wi-Fi...")
         disableWiFi()
 
         if otherServicesEnabled {
-            writeLog("Disabling other network services...")
+            writeDebugLog("Disabling other network services...")
             disableOtherNetworkServices()
         } else {
-            writeLog("Other services management disabled")
+            writeDebugLog("Other services management disabled")
         }
 
-        writeLog(">>> SLEEP ACTIONS COMPLETED <<<")
+        writeDebugLog(">>> SLEEP ACTIONS COMPLETED <<<")
     }
 
     private func performWakeActions() {
-        writeLog(">>> STARTING WAKE ACTIONS <<<")
+        writeDebugLog(">>> STARTING WAKE ACTIONS <<<")
 
         if bluetoothEnabled {
-            writeLog("Restoring Bluetooth state...")
+            writeDebugLog("Restoring Bluetooth state...")
             restoreBluetoothState()
         } else {
-            writeLog("Bluetooth management disabled")
+            writeDebugLog("Bluetooth management disabled")
         }
 
-        writeLog("Restoring Wi-Fi state...")
+        writeDebugLog("Restoring Wi-Fi state...")
         restoreWiFiState()
 
         if otherServicesEnabled {
-            writeLog("Restoring other network services...")
+            writeDebugLog("Restoring other network services...")
             restoreOtherNetworkServices()
         } else {
-            writeLog("Other services management disabled")
+            writeDebugLog("Other services management disabled")
         }
 
         // Clean up state files after restoration
         try? FileManager.default.removeItem(atPath: configDir + "/wifi_state")
         try? FileManager.default.removeItem(atPath: configDir + "/bluetooth_state")
         try? FileManager.default.removeItem(atPath: configDir + "/disabled_services")
-        writeLog("State files cleaned up")
+        writeDebugLog("State files cleaned up")
 
-        writeLog(">>> WAKE ACTIONS COMPLETED <<<")
+        writeDebugLog(">>> WAKE ACTIONS COMPLETED <<<")
     }
 
     private func saveBluetoothState() {
@@ -240,7 +240,7 @@ class PowerManager: ObservableObject {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: data, encoding: .utf8) ?? ""
         let state = output.contains("On") ? "1" : "0"
-        writeLog("Current Wi-Fi state: \(output.trimmingCharacters(in: .whitespacesAndNewlines)) -> saving '\(state)'")
+        writeDebugLog("Current Wi-Fi state: \(output.trimmingCharacters(in: .whitespacesAndNewlines)) -> saving '\(state)'")
         try? state.write(toFile: configDir + "/wifi_state", atomically: true, encoding: .utf8)
     }
 
@@ -249,25 +249,25 @@ class PowerManager: ObservableObject {
         task.launchPath = "/usr/sbin/networksetup"
         task.arguments = ["-setairportpower", "en0", "off"]
         task.launch()
-        writeLog("Wi-Fi disabled")
+        writeDebugLog("Wi-Fi disabled")
     }
 
     private func restoreWiFiState() {
         guard let state = try? String(contentsOfFile: configDir + "/wifi_state").trimmingCharacters(in: .whitespacesAndNewlines) else {
-            writeLog("No wifi_state file found")
+            writeDebugLog("No wifi_state file found")
             return
         }
 
-        writeLog("Restoring Wi-Fi state from file: '\(state)'")
+        writeDebugLog("Restoring Wi-Fi state from file: '\(state)'")
 
         if state == "1" {
             let task = Process()
             task.launchPath = "/usr/sbin/networksetup"
             task.arguments = ["-setairportpower", "en0", "on"]
             task.launch()
-            writeLog("Wi-Fi enabled")
+            writeDebugLog("Wi-Fi enabled")
         } else {
-            writeLog("Wi-Fi was already off, not restoring")
+            writeDebugLog("Wi-Fi was already off, not restoring")
         }
     }
 
