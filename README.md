@@ -2,6 +2,10 @@
 
 Menu bar app that automatically disables Wi-Fi when laptop lid closes and restores it when opened.
 
+## Download
+https://github.com/auroaj/WIFISleepManager/releases/latest/download/WiFiSleepManager.dmg
+https://github.com/auroaj/WIFISleepManager/releases/download/v1.0.1/WiFiSleepManager-v1.0.1.dmg
+
 ## Features
 
 - ✅ Wi-Fi disable/restore on lid close/open
