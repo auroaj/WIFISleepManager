@@ -11,6 +11,8 @@ class PowerManager: ObservableObject {
 
     init() {
         setupNotifications()
+        try? createConfigDirectory()
+        writeLog("App launched")
     }
 
     private func setupNotifications() {
@@ -70,6 +72,7 @@ class PowerManager: ObservableObject {
     func startMonitoring() {
         isMonitoring = true
         try? createConfigDirectory()
+        writeLog("Monitoring started")
     }
 
     func stopMonitoring() {
