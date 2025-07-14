@@ -211,7 +211,9 @@ class PowerManager: ObservableObject {
         task.waitUntilExit()
 
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let state = String(data: data, encoding: .utf8)?.contains("On") == true ? "1" : "0"
+        let output = String(data: data, encoding: .utf8) ?? ""
+        let state = output.contains("On") ? "1" : "0"
+        writeLog("Current Wi-Fi state: \(output.trimmingCharacters(in: .whitespacesAndNewlines)) -> saving '\(state)'")
         try? state.write(toFile: configDir + "/wifi_state", atomically: true, encoding: .utf8)
     }
 
@@ -224,14 +226,22 @@ class PowerManager: ObservableObject {
     }
 
     private func restoreWiFiState() {
-        guard let state = try? String(contentsOfFile: configDir + "/wifi_state").trimmingCharacters(in: .whitespacesAndNewlines),
-              state == "1" else { return }
+        guard let state = try? String(contentsOfFile: configDir + "/wifi_state").trimmingCharacters(in: .whitespacesAndNewlines) else {
+            writeLog("No wifi_state file found")
+            return
+        }
 
-        let task = Process()
-        task.launchPath = "/usr/sbin/networksetup"
-        task.arguments = ["-setairportpower", "en0", "on"]
-        task.launch()
-        writeLog("Wi-Fi enabled")
+        writeLog("Restoring Wi-Fi state from file: '\(state)'")
+
+        if state == "1" {
+            let task = Process()
+            task.launchPath = "/usr/sbin/networksetup"
+            task.arguments = ["-setairportpower", "en0", "on"]
+            task.launch()
+            writeLog("Wi-Fi enabled")
+        } else {
+            writeLog("Wi-Fi was already off, not restoring")
+        }
     }
 
     private func disableOtherNetworkServices() {
