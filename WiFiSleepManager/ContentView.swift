@@ -30,7 +30,7 @@ class PowerManager: ObservableObject {
     }
 
     @objc private func systemWillSleep() {
-        print("Sleep notification received, monitoring: \(isMonitoring)")
+        writeLog("Sleep notification received, monitoring: \(isMonitoring)")
         guard isMonitoring else { return }
 
         checkAndClearLogIfNeeded()
@@ -46,10 +46,12 @@ class PowerManager: ObservableObject {
         if otherServicesEnabled {
             disableOtherNetworkServices()
         }
+
+        writeLog("Sleep actions completed")
     }
 
     @objc private func systemDidWake() {
-        print("Wake notification received, monitoring: \(isMonitoring)")
+        writeLog("Wake notification received, monitoring: \(isMonitoring)")
         guard isMonitoring else { return }
 
         if bluetoothEnabled {
@@ -61,6 +63,8 @@ class PowerManager: ObservableObject {
         if otherServicesEnabled {
             restoreOtherNetworkServices()
         }
+
+        writeLog("Wake actions completed")
     }
 
     func startMonitoring() {
@@ -79,6 +83,24 @@ extension PowerManager {
         try FileManager.default.createDirectory(atPath: configDir, withIntermediateDirectories: true)
     }
 
+    private func writeLog(_ message: String) {
+        let timestamp = DateFormatter().string(from: Date())
+        let logEntry = "\(timestamp): \(message)\n"
+        let logPath = configDir + "/app.log"
+
+        if let data = logEntry.data(using: .utf8) {
+            if FileManager.default.fileExists(atPath: logPath) {
+                if let fileHandle = FileHandle(forWritingAtPath: logPath) {
+                    fileHandle.seekToEndOfFile()
+                    fileHandle.write(data)
+                    fileHandle.closeFile()
+                }
+            } else {
+                try? data.write(to: URL(fileURLWithPath: logPath))
+            }
+        }
+    }
+
     private func checkAndClearLogIfNeeded() {
         let logPath = configDir + "/sleepwatcher.log"
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: logPath),
@@ -93,6 +115,13 @@ extension PowerManager {
     func clearLogFile() {
         let logPath = configDir + "/sleepwatcher.log"
         try? "".write(toFile: logPath, atomically: true, encoding: .utf8)
+    }
+
+    func getConfigFiles() -> [String] {
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: configDir) else {
+            return []
+        }
+        return files.map { configDir + "/" + $0 }
     }
 
     func removeAllFiles() {
@@ -231,6 +260,9 @@ struct ContentView: View {
     @State private var bluetoothEnabled = true
     @State private var otherServicesEnabled = true
     @State private var selectedTab = 0
+    @State private var showDeleteAlert = false
+    @State private var showResult = false
+    @State private var resultMessage = ""
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -248,6 +280,11 @@ struct ContentView: View {
                     }
 
                     Spacer()
+
+                    Button("Quit") {
+                        NSApplication.shared.terminate(nil)
+                    }
+                    .foregroundColor(.secondary)
                 }
 
                 Divider()
@@ -305,10 +342,12 @@ struct ContentView: View {
                 VStack(spacing: 15) {
                     Button("Clear Log File") {
                         powerManager.clearLogFile()
+                        resultMessage = "Log file cleared"
+                        showResult = true
                     }
 
                     Button("Remove All Files") {
-                        powerManager.removeAllFiles()
+                        showDeleteAlert = true
                     }
                     .foregroundColor(.red)
                 }
@@ -326,6 +365,22 @@ struct ContentView: View {
         .onAppear {
             powerManager.bluetoothEnabled = bluetoothEnabled
             powerManager.otherServicesEnabled = otherServicesEnabled
+        }
+        .alert("Remove All Files", isPresented: $showDeleteAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Remove", role: .destructive) {
+                let files = powerManager.getConfigFiles()
+                powerManager.removeAllFiles()
+                resultMessage = files.isEmpty ? "No files to remove" : "Removed:\n" + files.joined(separator: "\n")
+                showResult = true
+            }
+        } message: {
+            Text("This will remove all configuration files and stop monitoring.")
+        }
+        .alert("Result", isPresented: $showResult) {
+            Button("OK") { }
+        } message: {
+            Text(resultMessage)
         }
     }
 }
