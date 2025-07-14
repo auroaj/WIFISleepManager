@@ -8,7 +8,10 @@ class PowerManager: ObservableObject {
     var otherServicesEnabled = true
 
     private let configDir = NSHomeDirectory() + "/.wifi-sleep-manager"
-    private var powerSource: CFRunLoopSource?
+    private var timer: Timer?
+    private var wasAwake = true
+    private var lastSleepActionTime: Date?
+    private var lastWakeActionTime: Date?
 
     init() {
         try? createConfigDirectory()
@@ -51,27 +54,37 @@ class PowerManager: ObservableObject {
 
     private func startLidStateMonitoring() {
         writeLog("Starting lid state monitoring")
-        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             self.checkLidState()
         }
     }
 
     private func checkLidState() {
-        let isLidClosed = CGDisplayIsActive(CGMainDisplayID()) == 0
-        writeLog("Lid state check: \(isLidClosed ? "CLOSED" : "OPEN")")
+        let currentlyAwake = CGDisplayIsActive(CGMainDisplayID()) != 0
+        writeLog("Lid state check: \(currentlyAwake ? "OPEN" : "CLOSED")")
 
-        if isLidClosed {
-            writeLog("LID CLOSED DETECTED - triggering sleep actions")
-            performSleepActions()
+        if wasAwake && !currentlyAwake {
+            // Just went to sleep
+            if lastSleepActionTime == nil || Date().timeIntervalSince(lastSleepActionTime!) > 5 {
+                writeLog("LID CLOSED DETECTED - triggering sleep actions")
+                performSleepActions()
+                lastSleepActionTime = Date()
+            }
+        } else if !wasAwake && currentlyAwake {
+            // Just woke up
+            if lastWakeActionTime == nil || Date().timeIntervalSince(lastWakeActionTime!) > 5 {
+                writeLog("LID OPENED DETECTED - triggering wake actions")
+                performWakeActions()
+                lastWakeActionTime = Date()
+            }
         }
+
+        wasAwake = currentlyAwake
     }
 
     private func unregisterForSleepNotifications() {
-        if let source = powerSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .defaultMode)
-            powerSource = nil
-        }
-
+        timer?.invalidate()
+        timer = nil
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
