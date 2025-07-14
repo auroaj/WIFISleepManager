@@ -1,0 +1,18 @@
+# .github/workflows/build.yml
+name: Build
+on: push
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build
+      run: xcodebuild -project WiFiSleepManager.xcodeproj -scheme WiFiSleepManager -configuration Release -archivePath WiFiSleepManager.xcarchive archive
+    - name: Export
+      run: xcodebuild -exportArchive -archivePath WiFiSleepManager.xcarchive -exportPath . -exportOptionsPlist exportOptions.plist
+    - name: Create DMG
+      run: hdiutil create -volname "WiFi Sleep Manager" -srcfolder WiFiSleepManager.app -ov -format UDZO WiFiSleepManager.dmg
+    - uses: actions/upload-artifact@v4
+      with:
+        name: WiFiSleepManager.dmg
+        path: WiFiSleepManager.dmg
