@@ -30,6 +30,7 @@ class PowerManager: ObservableObject {
     }
 
     @objc private func systemWillSleep() {
+        print("Sleep notification received, monitoring: \(isMonitoring)")
         guard isMonitoring else { return }
 
         checkAndClearLogIfNeeded()
@@ -48,6 +49,7 @@ class PowerManager: ObservableObject {
     }
 
     @objc private func systemDidWake() {
+        print("Wake notification received, monitoring: \(isMonitoring)")
         guard isMonitoring else { return }
 
         if bluetoothEnabled {
