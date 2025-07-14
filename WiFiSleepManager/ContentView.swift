@@ -1,12 +1,7 @@
 import SwiftUI
-import IOKit
-import IOKit.pwr_mgt
+import Foundation
 
 class PowerManager: ObservableObject {
-    private var connection: io_connect_t = 0
-    private var notificationPort: IONotificationPortRef?
-    private var iterator: io_iterator_t = 0
-
     @Published var isMonitoring = false
 
     var bluetoothEnabled = true
@@ -15,54 +10,26 @@ class PowerManager: ObservableObject {
     private let configDir = NSHomeDirectory() + "/.wifi-sleep-manager"
 
     init() {
-        setupPowerNotifications()
+        setupNotifications()
     }
 
-    deinit {
-        cleanup()
-    }
+    private func setupNotifications() {
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(systemWillSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
 
-    private func setupPowerNotifications() {
-        let service = IORegistryEntryFromPath(kIOMainPortDefault, kIOPowerPlane + ":/IOPowerConnection/IOPMrootDomain")
-        guard service != 0 else { return }
-
-        let result = IOServiceOpen(service, mach_task_self_, 0, &connection)
-        IOObjectRelease(service)
-        guard result == KERN_SUCCESS else { return }
-
-        notificationPort = IONotificationPortCreate(kIOMainPortDefault)
-        guard let port = notificationPort else { return }
-
-        let runLoopSource = IONotificationPortGetRunLoopSource(port)!.takeUnretainedValue()
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, CFRunLoopMode.defaultMode)
-
-        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-
-        IOServiceAddInterestNotification(
-            port,
-            service,
-            kIOGeneralInterest,
-            { (refcon, service, messageType, messageArgument) in
-                let powerManager = Unmanaged<PowerManager>.fromOpaque(refcon!).takeUnretainedValue()
-                powerManager.handlePowerNotification(messageType: messageType, messageArgument: messageArgument)
-            },
-            selfPtr,
-            &iterator
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(systemDidWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
         )
     }
 
-    private func handlePowerNotification(messageType: UInt32, messageArgument: UnsafeMutableRawPointer?) {
-        switch messageType {
-        case 0xe0000280: // kIOMessageSystemWillSleep
-            onSystemWillSleep()
-        case 0xe0000300: // kIOMessageSystemHasPoweredOn
-            onSystemDidWake()
-        default:
-            break
-        }
-    }
-
-    private func onSystemWillSleep() {
+    @objc private func systemWillSleep() {
         guard isMonitoring else { return }
 
         checkAndClearLogIfNeeded()
@@ -80,7 +47,7 @@ class PowerManager: ObservableObject {
         }
     }
 
-    private func onSystemDidWake() {
+    @objc private func systemDidWake() {
         guard isMonitoring else { return }
 
         if bluetoothEnabled {
@@ -101,18 +68,6 @@ class PowerManager: ObservableObject {
 
     func stopMonitoring() {
         isMonitoring = false
-    }
-
-    private func cleanup() {
-        if iterator != 0 {
-            IOObjectRelease(iterator)
-        }
-        if let port = notificationPort {
-            IONotificationPortDestroy(port)
-        }
-        if connection != 0 {
-            IOServiceClose(connection)
-        }
     }
 }
 
