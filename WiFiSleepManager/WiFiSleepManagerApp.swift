@@ -54,6 +54,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         setupMenu() // Refresh menu
     }
 
+    @objc func toggleDebugLogging() {
+        powerManager.debugLogging.toggle()
+        setupMenu() // Refresh menu
+    }
+
     @objc func clearLogs() {
         powerManager.clearLogFile()
     }
@@ -62,27 +67,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory() + "/.wifi-sleep-manager"))
     }
 
-    @objc func toggleDebugLogging() {
-        powerManager.debugLogging.toggle()
-        setupMenu() // Refresh menu
-    }
-}import SwiftUI
-
-@main
-struct WiFiSleepManagerApp: App {
-    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-
-    var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
-    }
-}
-
-class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+    @objc func quit() {
+        NSApplication.shared.terminate(nil)
     }
 }
