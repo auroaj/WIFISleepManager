@@ -6,6 +6,7 @@ class PowerManager: ObservableObject {
 
     var bluetoothEnabled = true
     var otherServicesEnabled = true
+    var debugLogging = false
 
     private let configDir = NSHomeDirectory() + "/.wifi-sleep-manager"
     private var timer: Timer?
@@ -21,6 +22,13 @@ class PowerManager: ObservableObject {
     func startMonitoring() {
         isMonitoring = true
         writeLog("Monitoring started")
+
+        // Clean up any existing state files for fresh start
+        try? FileManager.default.removeItem(atPath: configDir + "/wifi_state")
+        try? FileManager.default.removeItem(atPath: configDir + "/bluetooth_state")
+        try? FileManager.default.removeItem(atPath: configDir + "/disabled_services")
+        writeLog("Cleared existing state files")
+
         registerForSleepNotifications()
     }
 
@@ -94,6 +102,13 @@ class PowerManager: ObservableObject {
             writeLog("Monitoring disabled, ignoring screen sleep")
             return
         }
+
+        // Save Wi-Fi state only on screen sleep (first trigger)
+        if !FileManager.default.fileExists(atPath: configDir + "/wifi_state") {
+            writeLog("Saving Wi-Fi state on screen sleep...")
+            saveWiFiState()
+        }
+
         performSleepActions()
     }
 
@@ -339,6 +354,11 @@ extension PowerManager {
                 try? data.write(to: URL(fileURLWithPath: logPath))
             }
         }
+    }
+
+    private func writeDebugLog(_ message: String) {
+        guard debugLogging else { return }
+        writeLog("DEBUG: \(message)")
     }
 
     func clearLogFile() {
