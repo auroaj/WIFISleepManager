@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import IOKit.pwr_mgt
 
 class PowerManager: ObservableObject {
     @Published var isMonitoring = false
@@ -8,7 +9,7 @@ class PowerManager: ObservableObject {
     var otherServicesEnabled = true
 
     private let configDir = NSHomeDirectory() + "/.wifi-sleep-manager"
-    private var sleepwatcherProcess: Process?
+    private var powerSource: CFRunLoopSource?
 
     init() {
         try? createConfigDirectory()
@@ -18,123 +19,291 @@ class PowerManager: ObservableObject {
     func startMonitoring() {
         isMonitoring = true
         writeLog("Monitoring started")
-        createScripts()
-        installAndStartSleepwatcher()
+        registerForSleepNotifications()
     }
 
     func stopMonitoring() {
         isMonitoring = false
-        sleepwatcherProcess?.terminate()
+        unregisterForSleepNotifications()
         writeLog("Monitoring stopped")
     }
 
-    private func createScripts() {
-        let sleepScript = """
-#!/bin/zsh
+    private func registerForSleepNotifications() {
+        writeLog("Registering for sleep notifications")
 
-# Save and disable Bluetooth
-if command -v blueutil >/dev/null 2>&1; then
-    echo $(blueutil -p) > "\(configDir)/bluetooth_state"
-    bluestatus=$(head -n 1 "\(configDir)/bluetooth_state")
-    if [[ "$bluestatus" != "0" ]]; then
-        blueutil -p 0
-    fi
-fi
+        let callback: IOPowerSourceCallbackType = { context in
+            let powerManager = Unmanaged<PowerManager>.fromOpaque(context!).takeUnretainedValue()
+            powerManager.checkPowerState()
+        }
 
-# Save and disable Wi-Fi
-if [[ $(networksetup -getairportpower en0) =~ "On" ]]; then
-    echo 1 > "\(configDir)/wifi_state"
-    networksetup -setairportpower en0 off
-else
-    echo 0 > "\(configDir)/wifi_state"
-fi
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        powerSource = IOPSCreateLimitedPowerNotification(callback, context)
 
-# Disable other network services
-services=$(networksetup -listallnetworkservices | sed '1d' | grep -v "Wi-Fi")
-echo "" > "\(configDir)/disabled_services"
-while IFS= read -r service; do
-    if [[ $service != \\** ]]; then
-        echo "$service" >> "\(configDir)/disabled_services"
-        networksetup -setnetworkserviceenabled "$service" off
-    fi
-done <<< "$services"
-"""
+        if let source = powerSource {
+            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .defaultMode)
+            writeLog("Power source notifications registered")
+        } else {
+            writeLog("Failed to register power source notifications")
+        }
 
-        let wakeScript = """
-#!/bin/zsh
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(screenDidSleep),
+            name: NSWorkspace.screensDidSleepNotification,
+            object: nil
+        )
+        writeLog("Screen sleep notifications registered")
 
-# Restore Bluetooth
-if [[ -f "\(configDir)/bluetooth_state" ]]; then
-    bluestatus=$(head -n 1 "\(configDir)/bluetooth_state")
-    if [[ "$bluestatus" != "0" ]] && command -v blueutil >/dev/null 2>&1; then
-        blueutil -p 1
-    fi
-fi
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(screenDidWake),
+            name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
+        writeLog("Screen wake notifications registered")
 
-# Restore Wi-Fi
-if [[ -f "\(configDir)/wifi_state" ]]; then
-    wifistatus=$(head -n 1 "\(configDir)/wifi_state")
-    if [[ "$wifistatus" != "0" ]]; then
-        networksetup -setairportpower en0 on
-    fi
-fi
-
-# Restore other network services
-if [[ -f "\(configDir)/disabled_services" ]]; then
-    while IFS= read -r service; do
-        if [[ -n "$service" ]]; then
-            networksetup -setnetworkserviceenabled "$service" on
-        fi
-    done < "\(configDir)/disabled_services"
-fi
-"""
-
-        let sleepwatcherBinary = sleepwatcherBinaryData()
-
-        try? sleepScript.write(toFile: configDir + "/sleep.sh", atomically: true, encoding: .utf8)
-        try? wakeScript.write(toFile: configDir + "/wakeup.sh", atomically: true, encoding: .utf8)
-        try? sleepwatcherBinary.write(to: URL(fileURLWithPath: configDir + "/sleepwatcher"))
-
-        makeExecutable(configDir + "/sleep.sh")
-        makeExecutable(configDir + "/wakeup.sh")
-        makeExecutable(configDir + "/sleepwatcher")
+        // Additional lid state monitoring
+        startLidStateMonitoring()
     }
 
-    private func makeExecutable(_ path: String) {
+    private func startLidStateMonitoring() {
+        writeLog("Starting lid state monitoring")
+        Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+            self.checkLidState()
+        }
+    }
+
+    private func checkLidState() {
+        let isLidClosed = CGDisplayIsActive(CGMainDisplayID()) == 0
+        writeLog("Lid state check: \(isLidClosed ? "CLOSED" : "OPEN")")
+
+        if isLidClosed {
+            writeLog("LID CLOSED DETECTED - triggering sleep actions")
+            performSleepActions()
+        }
+    }
+
+    private func unregisterForSleepNotifications() {
+        if let source = powerSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, .defaultMode)
+            powerSource = nil
+        }
+
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
+    }
+
+    @objc private func screenDidSleep() {
+        writeLog("=== SCREEN SLEEP EVENT RECEIVED ===")
+        guard isMonitoring else {
+            writeLog("Monitoring disabled, ignoring screen sleep")
+            return
+        }
+        performSleepActions()
+    }
+
+    @objc private func screenDidWake() {
+        writeLog("=== SCREEN WAKE EVENT RECEIVED ===")
+        guard isMonitoring else {
+            writeLog("Monitoring disabled, ignoring screen wake")
+            return
+        }
+        performWakeActions()
+    }
+
+    private func checkPowerState() {
+        writeLog("Power state callback triggered")
+        let powerInfo = IOPSCopyPowerSourcesInfo()?.takeRetainedValue()
+        if let info = powerInfo {
+            writeLog("Power source info updated")
+        } else {
+            writeLog("No power source info available")
+        }
+    }
+
+    private func performSleepActions() {
+        writeLog(">>> STARTING SLEEP ACTIONS <<<")
+        writeLog("Bluetooth enabled: \(bluetoothEnabled)")
+        writeLog("Other services enabled: \(otherServicesEnabled)")
+
+        if bluetoothEnabled {
+            writeLog("Saving Bluetooth state...")
+            saveBluetoothState()
+            writeLog("Disabling Bluetooth...")
+            disableBluetooth()
+        } else {
+            writeLog("Bluetooth management disabled")
+        }
+
+        writeLog("Saving Wi-Fi state...")
+        saveWiFiState()
+        writeLog("Disabling Wi-Fi...")
+        disableWiFi()
+
+        if otherServicesEnabled {
+            writeLog("Disabling other network services...")
+            disableOtherNetworkServices()
+        } else {
+            writeLog("Other services management disabled")
+        }
+
+        writeLog(">>> SLEEP ACTIONS COMPLETED <<<")
+    }
+
+    private func performWakeActions() {
+        writeLog(">>> STARTING WAKE ACTIONS <<<")
+
+        if bluetoothEnabled {
+            writeLog("Restoring Bluetooth state...")
+            restoreBluetoothState()
+        } else {
+            writeLog("Bluetooth management disabled")
+        }
+
+        writeLog("Restoring Wi-Fi state...")
+        restoreWiFiState()
+
+        if otherServicesEnabled {
+            writeLog("Restoring other network services...")
+            restoreOtherNetworkServices()
+        } else {
+            writeLog("Other services management disabled")
+        }
+
+        writeLog(">>> WAKE ACTIONS COMPLETED <<<")
+    }
+
+    private func saveBluetoothState() {
+        guard commandExists("blueutil") else { return }
+
         let task = Process()
-        task.launchPath = "/bin/chmod"
-        task.arguments = ["+x", path]
+        task.launchPath = "/usr/bin/env"
+        task.arguments = ["blueutil", "-p"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
         task.launch()
         task.waitUntilExit()
-    }
 
-    private func installAndStartSleepwatcher() {
-        sleepwatcherProcess = Process()
-        sleepwatcherProcess?.launchPath = configDir + "/sleepwatcher"
-        sleepwatcherProcess?.arguments = ["-V", "-s", configDir + "/sleep.sh", "-w", configDir + "/wakeup.sh"]
-
-        do {
-            try sleepwatcherProcess?.run()
-            writeLog("Sleepwatcher started")
-        } catch {
-            writeLog("Failed to start sleepwatcher: \(error)")
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        if let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
+            try? output.write(toFile: configDir + "/bluetooth_state", atomically: true, encoding: .utf8)
         }
     }
 
-    private func sleepwatcherBinaryData() -> Data {
-        // Embedded sleepwatcher binary for arm64 macOS
-        // This is a placeholder - you'd need to include the actual binary
-        // For now, try to copy from system if available
-        if let data = try? Data(contentsOf: URL(fileURLWithPath: "/usr/local/bin/sleepwatcher")) {
-            return data
-        } else if let data = try? Data(contentsOf: URL(fileURLWithPath: "/opt/homebrew/bin/sleepwatcher")) {
-            return data
+    private func disableBluetooth() {
+        guard commandExists("blueutil") else { return }
+
+        let task = Process()
+        task.launchPath = "/usr/bin/env"
+        task.arguments = ["blueutil", "-p", "0"]
+        task.launch()
+    }
+
+    private func restoreBluetoothState() {
+        guard let state = try? String(contentsOfFile: configDir + "/bluetooth_state").trimmingCharacters(in: .whitespacesAndNewlines),
+              state == "1",
+              commandExists("blueutil") else { return }
+
+        let task = Process()
+        task.launchPath = "/usr/bin/env"
+        task.arguments = ["blueutil", "-p", "1"]
+        task.launch()
+    }
+
+    private func saveWiFiState() {
+        let task = Process()
+        task.launchPath = "/usr/sbin/networksetup"
+        task.arguments = ["-getairportpower", "en0"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.launch()
+        task.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let state = String(data: data, encoding: .utf8)?.contains("On") == true ? "1" : "0"
+        try? state.write(toFile: configDir + "/wifi_state", atomically: true, encoding: .utf8)
+    }
+
+    private func disableWiFi() {
+        let task = Process()
+        task.launchPath = "/usr/sbin/networksetup"
+        task.arguments = ["-setairportpower", "en0", "off"]
+        task.launch()
+        writeLog("Wi-Fi disabled")
+    }
+
+    private func restoreWiFiState() {
+        guard let state = try? String(contentsOfFile: configDir + "/wifi_state").trimmingCharacters(in: .whitespacesAndNewlines),
+              state == "1" else { return }
+
+        let task = Process()
+        task.launchPath = "/usr/sbin/networksetup"
+        task.arguments = ["-setairportpower", "en0", "on"]
+        task.launch()
+        writeLog("Wi-Fi enabled")
+    }
+
+    private func disableOtherNetworkServices() {
+        let task = Process()
+        task.launchPath = "/usr/sbin/networksetup"
+        task.arguments = ["-listallnetworkservices"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.launch()
+        task.waitUntilExit()
+
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        guard let output = String(data: data, encoding: .utf8) else { return }
+
+        let services = output.components(separatedBy: .newlines)
+            .dropFirst()
+            .filter { !$0.isEmpty && !$0.contains("Wi-Fi") && !$0.hasPrefix("*") }
+
+        var disabledServices: [String] = []
+
+        for service in services {
+            let disableTask = Process()
+            disableTask.launchPath = "/usr/sbin/networksetup"
+            disableTask.arguments = ["-setnetworkserviceenabled", service, "off"]
+            disableTask.launch()
+            disableTask.waitUntilExit()
+
+            if disableTask.terminationStatus == 0 {
+                disabledServices.append(service)
+            }
         }
-        return Data()
+
+        let disabledList = disabledServices.joined(separator: "\n")
+        try? disabledList.write(toFile: configDir + "/disabled_services", atomically: true, encoding: .utf8)
+    }
+
+    private func restoreOtherNetworkServices() {
+        guard let content = try? String(contentsOfFile: configDir + "/disabled_services") else { return }
+
+        let services = content.components(separatedBy: .newlines).filter { !$0.isEmpty }
+
+        for service in services {
+            let enableTask = Process()
+            enableTask.launchPath = "/usr/sbin/networksetup"
+            enableTask.arguments = ["-setnetworkserviceenabled", service, "on"]
+            enableTask.launch()
+        }
+    }
+
+    private func commandExists(_ command: String) -> Bool {
+        let task = Process()
+        task.launchPath = "/usr/bin/which"
+        task.arguments = [command]
+        task.standardOutput = Pipe()
+        task.launch()
+        task.waitUntilExit()
+        return task.terminationStatus == 0
     }
 }
 
-// MARK: - Network Management
+// MARK: - Utility Functions
 extension PowerManager {
     private func createConfigDirectory() throws {
         try FileManager.default.createDirectory(atPath: configDir, withIntermediateDirectories: true)
@@ -157,16 +326,6 @@ extension PowerManager {
             } else {
                 try? data.write(to: URL(fileURLWithPath: logPath))
             }
-        }
-    }
-
-    private func checkAndClearLogIfNeeded() {
-        let logPath = configDir + "/app.log"
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: logPath),
-              let fileSize = attributes[.size] as? Int64 else { return }
-
-        if fileSize > 1_048_576 {
-            try? "".write(toFile: logPath, atomically: true, encoding: .utf8)
         }
     }
 
