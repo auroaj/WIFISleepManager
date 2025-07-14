@@ -115,17 +115,23 @@ class PowerManager: ObservableObject {
         writeLog("Bluetooth enabled: \(bluetoothEnabled)")
         writeLog("Other services enabled: \(otherServicesEnabled)")
 
-        if bluetoothEnabled {
+        // Only save states if files don't exist (first sleep action)
+        let wifiStateExists = FileManager.default.fileExists(atPath: configDir + "/wifi_state")
+        let bluetoothStateExists = FileManager.default.fileExists(atPath: configDir + "/bluetooth_state")
+
+        if bluetoothEnabled && !bluetoothStateExists {
             writeLog("Saving Bluetooth state...")
             saveBluetoothState()
             writeLog("Disabling Bluetooth...")
             disableBluetooth()
         } else {
-            writeLog("Bluetooth management disabled")
+            writeLog("Bluetooth already managed or disabled")
         }
 
-        writeLog("Saving Wi-Fi state...")
-        saveWiFiState()
+        if !wifiStateExists {
+            writeLog("Saving Wi-Fi state...")
+            saveWiFiState()
+        }
         writeLog("Disabling Wi-Fi...")
         disableWiFi()
 
@@ -158,6 +164,12 @@ class PowerManager: ObservableObject {
         } else {
             writeLog("Other services management disabled")
         }
+
+        // Clean up state files after restoration
+        try? FileManager.default.removeItem(atPath: configDir + "/wifi_state")
+        try? FileManager.default.removeItem(atPath: configDir + "/bluetooth_state")
+        try? FileManager.default.removeItem(atPath: configDir + "/disabled_services")
+        writeLog("State files cleaned up")
 
         writeLog(">>> WAKE ACTIONS COMPLETED <<<")
     }
