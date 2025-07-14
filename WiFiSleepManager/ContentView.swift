@@ -10,73 +10,84 @@ class PowerManager: ObservableObject {
     private let configDir = NSHomeDirectory() + "/.wifi-sleep-manager"
 
     init() {
-        setupNotifications()
         try? createConfigDirectory()
         writeLog("App launched")
     }
 
-    private func setupNotifications() {
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(systemWillSleep),
-            name: NSWorkspace.willSleepNotification,
-            object: nil
-        )
-
-        NSWorkspace.shared.notificationCenter.addObserver(
-            self,
-            selector: #selector(systemDidWake),
-            name: NSWorkspace.didWakeNotification,
-            object: nil
-        )
-    }
-
-    @objc private func systemWillSleep() {
-        writeLog("Sleep notification received, monitoring: \(isMonitoring)")
-        guard isMonitoring else { return }
-
-        checkAndClearLogIfNeeded()
-
-        if bluetoothEnabled {
-            saveBluetoothState()
-            disableBluetooth()
-        }
-
-        saveWiFiState()
-        disableWiFi()
-
-        if otherServicesEnabled {
-            disableOtherNetworkServices()
-        }
-
-        writeLog("Sleep actions completed")
-    }
-
-    @objc private func systemDidWake() {
-        writeLog("Wake notification received, monitoring: \(isMonitoring)")
-        guard isMonitoring else { return }
-
-        if bluetoothEnabled {
-            restoreBluetoothState()
-        }
-
-        restoreWiFiState()
-
-        if otherServicesEnabled {
-            restoreOtherNetworkServices()
-        }
-
-        writeLog("Wake actions completed")
-    }
-
     func startMonitoring() {
         isMonitoring = true
-        try? createConfigDirectory()
         writeLog("Monitoring started")
+        createSleepScripts()
+        startSleepwatcher()
     }
 
     func stopMonitoring() {
         isMonitoring = false
+        stopSleepwatcher()
+        writeLog("Monitoring stopped")
+    }
+
+    private func createSleepScripts() {
+        let sleepScript = """
+#!/bin/zsh
+\(bluetoothEnabled ? """
+echo $(blueutil -p) > "\(configDir)/bluetooth_state"
+if [[ "$(head -n 1 "\(configDir)/bluetooth_state")" != "0" ]]; then
+    blueutil -p 0
+fi
+""" : "")
+
+if [[ $(networksetup -getairportpower en0) =~ "On" ]]; then
+    echo 1 > "\(configDir)/wifi_state"
+    networksetup -setairportpower en0 off
+else
+    echo 0 > "\(configDir)/wifi_state"
+fi
+"""
+
+        let wakeScript = """
+#!/bin/zsh
+\(bluetoothEnabled ? """
+if [[ -f "\(configDir)/bluetooth_state" && "$(head -n 1 "\(configDir)/bluetooth_state")" != "0" ]]; then
+    blueutil -p 1
+fi
+""" : "")
+
+if [[ -f "\(configDir)/wifi_state" && "$(head -n 1 "\(configDir)/wifi_state")" != "0" ]]; then
+    networksetup -setairportpower en0 on
+fi
+"""
+
+        try? sleepScript.write(toFile: configDir + "/sleep.sh", atomically: true, encoding: .utf8)
+        try? wakeScript.write(toFile: configDir + "/wakeup.sh", atomically: true, encoding: .utf8)
+
+        makeExecutable(configDir + "/sleep.sh")
+        makeExecutable(configDir + "/wakeup.sh")
+    }
+
+    private func makeExecutable(_ path: String) {
+        let task = Process()
+        task.launchPath = "/bin/chmod"
+        task.arguments = ["+x", path]
+        task.launch()
+        task.waitUntilExit()
+    }
+
+    private func startSleepwatcher() {
+        let task = Process()
+        task.launchPath = "/usr/local/bin/sleepwatcher"
+        task.arguments = ["-V", "-s", configDir + "/sleep.sh", "-w", configDir + "/wakeup.sh"]
+        task.launch()
+
+        writeLog("Sleepwatcher started")
+    }
+
+    private func stopSleepwatcher() {
+        let task = Process()
+        task.launchPath = "/usr/bin/killall"
+        task.arguments = ["sleepwatcher"]
+        task.launch()
+        task.waitUntilExit()
     }
 }
 
@@ -87,7 +98,9 @@ extension PowerManager {
     }
 
     private func writeLog(_ message: String) {
-        let timestamp = DateFormatter().string(from: Date())
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        let timestamp = formatter.string(from: Date())
         let logEntry = "\(timestamp): \(message)\n"
         let logPath = configDir + "/app.log"
 
