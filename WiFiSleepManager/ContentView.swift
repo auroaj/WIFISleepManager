@@ -1,6 +1,5 @@
 import SwiftUI
 import Foundation
-import IOKit.pwr_mgt
 
 class PowerManager: ObservableObject {
     @Published var isMonitoring = false
@@ -31,21 +30,6 @@ class PowerManager: ObservableObject {
     private func registerForSleepNotifications() {
         writeLog("Registering for sleep notifications")
 
-        let callback: IOPowerSourceCallbackType = { context in
-            let powerManager = Unmanaged<PowerManager>.fromOpaque(context!).takeUnretainedValue()
-            powerManager.checkPowerState()
-        }
-
-        let context = Unmanaged.passUnretained(self).toOpaque()
-        powerSource = IOPSCreateLimitedPowerNotification(callback, context)
-
-        if let source = powerSource {
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .defaultMode)
-            writeLog("Power source notifications registered")
-        } else {
-            writeLog("Failed to register power source notifications")
-        }
-
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
             selector: #selector(screenDidSleep),
@@ -62,7 +46,6 @@ class PowerManager: ObservableObject {
         )
         writeLog("Screen wake notifications registered")
 
-        // Additional lid state monitoring
         startLidStateMonitoring()
     }
 
@@ -112,12 +95,6 @@ class PowerManager: ObservableObject {
 
     private func checkPowerState() {
         writeLog("Power state callback triggered")
-        let powerInfo = IOPSCopyPowerSourcesInfo()?.takeRetainedValue()
-        if let info = powerInfo {
-            writeLog("Power source info updated")
-        } else {
-            writeLog("No power source info available")
-        }
     }
 
     private func performSleepActions() {
