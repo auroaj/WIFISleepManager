@@ -19,6 +19,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem?.button?.image = NSImage(systemSymbolName: "wifi.slash", accessibilityDescription: "WiFi Sleep Manager")
 
+        powerManager.startMonitoring()
+
         setupMenu()
     }
 
@@ -30,6 +32,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(enableItem)
 
         menu.addItem(NSMenuItem.separator())
+
+        let bluetoothItem = NSMenuItem(title: "Manage Bluetooth", action: #selector(toggleBluetooth), keyEquivalent: "")
+        bluetoothItem.target = self
+        bluetoothItem.state = powerManager.bluetoothEnabled ? .on : .off
+        menu.addItem(bluetoothItem)
 
         let debugItem = NSMenuItem(title: "Debug Logging", action: #selector(toggleDebugLogging), keyEquivalent: "")
         debugItem.target = self
@@ -51,6 +58,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             powerManager.startMonitoring()
         }
+        setupMenu() // Refresh menu
+    }
+
+    @objc func toggleBluetooth() {
+        powerManager.bluetoothEnabled.toggle()
         setupMenu() // Refresh menu
     }
 
