@@ -82,11 +82,9 @@ jobs:
 
     - name: Upload to release
       if: github.event_name == 'release'
-      uses: actions/upload-release-asset@v1
+      run: |
+        gh release upload ${{ github.event.release.tag_name }} \
+          ${{ env.APP_NAME }}-${{ steps.version.outputs.version }}.dmg \
+          --clobber
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ github.event.release.upload_url }}
-        asset_path: ${{ env.APP_NAME }}-${{ steps.version.outputs.version }}.dmg
-        asset_name: ${{ env.APP_NAME }}-${{ steps.version.outputs.version }}.dmg
-        asset_content_type: application/octet-stream
