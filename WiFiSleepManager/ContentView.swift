@@ -8,6 +8,7 @@ class PowerManager: ObservableObject {
     var otherServicesEnabled = true
 
     private let configDir = NSHomeDirectory() + "/.wifi-sleep-manager"
+    private var sleepwatcherProcess: Process?
 
     init() {
         try? createConfigDirectory()
@@ -17,52 +18,86 @@ class PowerManager: ObservableObject {
     func startMonitoring() {
         isMonitoring = true
         writeLog("Monitoring started")
-        createSleepScripts()
-        startSleepwatcher()
+        createScripts()
+        installAndStartSleepwatcher()
     }
 
     func stopMonitoring() {
         isMonitoring = false
-        stopSleepwatcher()
+        sleepwatcherProcess?.terminate()
         writeLog("Monitoring stopped")
     }
 
-    private func createSleepScripts() {
+    private func createScripts() {
         let sleepScript = """
 #!/bin/zsh
-\(bluetoothEnabled ? """
-echo $(blueutil -p) > "\(configDir)/bluetooth_state"
-if [[ "$(head -n 1 "\(configDir)/bluetooth_state")" != "0" ]]; then
-    blueutil -p 0
-fi
-""" : "")
 
+# Save and disable Bluetooth
+if command -v blueutil >/dev/null 2>&1; then
+    echo $(blueutil -p) > "\(configDir)/bluetooth_state"
+    bluestatus=$(head -n 1 "\(configDir)/bluetooth_state")
+    if [[ "$bluestatus" != "0" ]]; then
+        blueutil -p 0
+    fi
+fi
+
+# Save and disable Wi-Fi
 if [[ $(networksetup -getairportpower en0) =~ "On" ]]; then
     echo 1 > "\(configDir)/wifi_state"
     networksetup -setairportpower en0 off
 else
     echo 0 > "\(configDir)/wifi_state"
 fi
+
+# Disable other network services
+services=$(networksetup -listallnetworkservices | sed '1d' | grep -v "Wi-Fi")
+echo "" > "\(configDir)/disabled_services"
+while IFS= read -r service; do
+    if [[ $service != \\** ]]; then
+        echo "$service" >> "\(configDir)/disabled_services"
+        networksetup -setnetworkserviceenabled "$service" off
+    fi
+done <<< "$services"
 """
 
         let wakeScript = """
 #!/bin/zsh
-\(bluetoothEnabled ? """
-if [[ -f "\(configDir)/bluetooth_state" && "$(head -n 1 "\(configDir)/bluetooth_state")" != "0" ]]; then
-    blueutil -p 1
-fi
-""" : "")
 
-if [[ -f "\(configDir)/wifi_state" && "$(head -n 1 "\(configDir)/wifi_state")" != "0" ]]; then
-    networksetup -setairportpower en0 on
+# Restore Bluetooth
+if [[ -f "\(configDir)/bluetooth_state" ]]; then
+    bluestatus=$(head -n 1 "\(configDir)/bluetooth_state")
+    if [[ "$bluestatus" != "0" ]] && command -v blueutil >/dev/null 2>&1; then
+        blueutil -p 1
+    fi
+fi
+
+# Restore Wi-Fi
+if [[ -f "\(configDir)/wifi_state" ]]; then
+    wifistatus=$(head -n 1 "\(configDir)/wifi_state")
+    if [[ "$wifistatus" != "0" ]]; then
+        networksetup -setairportpower en0 on
+    fi
+fi
+
+# Restore other network services
+if [[ -f "\(configDir)/disabled_services" ]]; then
+    while IFS= read -r service; do
+        if [[ -n "$service" ]]; then
+            networksetup -setnetworkserviceenabled "$service" on
+        fi
+    done < "\(configDir)/disabled_services"
 fi
 """
 
+        let sleepwatcherBinary = sleepwatcherBinaryData()
+
         try? sleepScript.write(toFile: configDir + "/sleep.sh", atomically: true, encoding: .utf8)
         try? wakeScript.write(toFile: configDir + "/wakeup.sh", atomically: true, encoding: .utf8)
+        try? sleepwatcherBinary.write(to: URL(fileURLWithPath: configDir + "/sleepwatcher"))
 
         makeExecutable(configDir + "/sleep.sh")
         makeExecutable(configDir + "/wakeup.sh")
+        makeExecutable(configDir + "/sleepwatcher")
     }
 
     private func makeExecutable(_ path: String) {
@@ -73,21 +108,29 @@ fi
         task.waitUntilExit()
     }
 
-    private func startSleepwatcher() {
-        let task = Process()
-        task.launchPath = "/usr/local/bin/sleepwatcher"
-        task.arguments = ["-V", "-s", configDir + "/sleep.sh", "-w", configDir + "/wakeup.sh"]
-        task.launch()
+    private func installAndStartSleepwatcher() {
+        sleepwatcherProcess = Process()
+        sleepwatcherProcess?.launchPath = configDir + "/sleepwatcher"
+        sleepwatcherProcess?.arguments = ["-V", "-s", configDir + "/sleep.sh", "-w", configDir + "/wakeup.sh"]
 
-        writeLog("Sleepwatcher started")
+        do {
+            try sleepwatcherProcess?.run()
+            writeLog("Sleepwatcher started")
+        } catch {
+            writeLog("Failed to start sleepwatcher: \(error)")
+        }
     }
 
-    private func stopSleepwatcher() {
-        let task = Process()
-        task.launchPath = "/usr/bin/killall"
-        task.arguments = ["sleepwatcher"]
-        task.launch()
-        task.waitUntilExit()
+    private func sleepwatcherBinaryData() -> Data {
+        // Embedded sleepwatcher binary for arm64 macOS
+        // This is a placeholder - you'd need to include the actual binary
+        // For now, try to copy from system if available
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: "/usr/local/bin/sleepwatcher")) {
+            return data
+        } else if let data = try? Data(contentsOf: URL(fileURLWithPath: "/opt/homebrew/bin/sleepwatcher")) {
+            return data
+        }
+        return Data()
     }
 }
 
@@ -118,18 +161,17 @@ extension PowerManager {
     }
 
     private func checkAndClearLogIfNeeded() {
-        let logPath = configDir + "/sleepwatcher.log"
+        let logPath = configDir + "/app.log"
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: logPath),
               let fileSize = attributes[.size] as? Int64 else { return }
 
-        // Clear if larger than 1MB
         if fileSize > 1_048_576 {
             try? "".write(toFile: logPath, atomically: true, encoding: .utf8)
         }
     }
 
     func clearLogFile() {
-        let logPath = configDir + "/sleepwatcher.log"
+        let logPath = configDir + "/app.log"
         try? "".write(toFile: logPath, atomically: true, encoding: .utf8)
     }
 
@@ -145,130 +187,6 @@ extension PowerManager {
         try? FileManager.default.removeItem(atPath: configDir)
         isMonitoring = false
     }
-
-    private func saveBluetoothState() {
-        let task = Process()
-        task.launchPath = "/usr/bin/which"
-        task.arguments = ["blueutil"]
-        task.launch()
-        task.waitUntilExit()
-
-        guard task.terminationStatus == 0 else { return }
-
-        let bluetoothTask = Process()
-        bluetoothTask.launchPath = "/usr/local/bin/blueutil"
-        bluetoothTask.arguments = ["-p"]
-
-        let pipe = Pipe()
-        bluetoothTask.standardOutput = pipe
-        bluetoothTask.launch()
-        bluetoothTask.waitUntilExit()
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
-            try? output.write(toFile: configDir + "/bluetooth_state", atomically: true, encoding: .utf8)
-        }
-    }
-
-    private func disableBluetooth() {
-        let task = Process()
-        task.launchPath = "/usr/local/bin/blueutil"
-        task.arguments = ["-p", "0"]
-        task.launch()
-    }
-
-    private func restoreBluetoothState() {
-        guard let state = try? String(contentsOfFile: configDir + "/bluetooth_state").trimmingCharacters(in: .whitespacesAndNewlines),
-              state == "1" else { return }
-
-        let task = Process()
-        task.launchPath = "/usr/local/bin/blueutil"
-        task.arguments = ["-p", "1"]
-        task.launch()
-    }
-
-    private func saveWiFiState() {
-        let task = Process()
-        task.launchPath = "/usr/sbin/networksetup"
-        task.arguments = ["-getairportpower", "en0"]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.launch()
-        task.waitUntilExit()
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        if let output = String(data: data, encoding: .utf8), output.contains("On") {
-            try? "1".write(toFile: configDir + "/wifi_state", atomically: true, encoding: .utf8)
-        } else {
-            try? "0".write(toFile: configDir + "/wifi_state", atomically: true, encoding: .utf8)
-        }
-    }
-
-    private func disableWiFi() {
-        let task = Process()
-        task.launchPath = "/usr/sbin/networksetup"
-        task.arguments = ["-setairportpower", "en0", "off"]
-        task.launch()
-    }
-
-    private func restoreWiFiState() {
-        guard let state = try? String(contentsOfFile: configDir + "/wifi_state").trimmingCharacters(in: .whitespacesAndNewlines),
-              state == "1" else { return }
-
-        let task = Process()
-        task.launchPath = "/usr/sbin/networksetup"
-        task.arguments = ["-setairportpower", "en0", "on"]
-        task.launch()
-    }
-
-    private func disableOtherNetworkServices() {
-        let task = Process()
-        task.launchPath = "/usr/sbin/networksetup"
-        task.arguments = ["-listallnetworkservices"]
-
-        let pipe = Pipe()
-        task.standardOutput = pipe
-        task.launch()
-        task.waitUntilExit()
-
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        guard let output = String(data: data, encoding: .utf8) else { return }
-
-        let services = output.components(separatedBy: .newlines)
-            .dropFirst()
-            .filter { !$0.isEmpty && !$0.contains("Wi-Fi") && !$0.hasPrefix("*") }
-
-        var disabledServices: [String] = []
-
-        for service in services {
-            let disableTask = Process()
-            disableTask.launchPath = "/usr/sbin/networksetup"
-            disableTask.arguments = ["-setnetworkserviceenabled", service, "off"]
-            disableTask.launch()
-            disableTask.waitUntilExit()
-
-            if disableTask.terminationStatus == 0 {
-                disabledServices.append(service)
-            }
-        }
-
-        let disabledList = disabledServices.joined(separator: "\n")
-        try? disabledList.write(toFile: configDir + "/disabled_services", atomically: true, encoding: .utf8)
-    }
-
-    private func restoreOtherNetworkServices() {
-        guard let content = try? String(contentsOfFile: configDir + "/disabled_services") else { return }
-
-        let services = content.components(separatedBy: .newlines).filter { !$0.isEmpty }
-
-        for service in services {
-            let enableTask = Process()
-            enableTask.launchPath = "/usr/sbin/networksetup"
-            enableTask.arguments = ["-setnetworkserviceenabled", service, "on"]
-            enableTask.launch()
-        }
-    }
 }
 
 struct ContentView: View {
@@ -282,7 +200,6 @@ struct ContentView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-            // Main tab
             VStack(spacing: 20) {
                 HStack {
                     Image(systemName: "wifi.slash")
@@ -347,7 +264,6 @@ struct ContentView: View {
             }
             .tag(0)
 
-            // Settings tab
             VStack(spacing: 20) {
                 Text("Settings")
                     .font(.title2)
